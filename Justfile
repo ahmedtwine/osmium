@@ -37,11 +37,9 @@ run: build
 test:
     # Print a message to the console.
     @echo "Running tests..."
-    # Invoke the Zig compiler to build the test executable. This command is incorrect as `zig build` does not use `-o` for output specification.
-    # This line needs to be adjusted to correctly invoke Zig's test building mechanism, typically just `zig build test`.
-    {{CC}} test {{CFLAGS}} -o {{BUILD_DIR}}/{{TEST_EXECUTABLE}}
-    # Execute the test executable. This assumes the test executable is placed in the BUILD_DIR.
-    ./{{BUILD_DIR}}/{{TEST_EXECUTABLE}}
+    # Correctly invoke Zig's test building mechanism.
+    {{CC}} test
+    # Note: Execution of the test executable is handled by Zig and does not need to be explicitly done here.
 
 # A recipe to clean up build artifacts.
 clean:
