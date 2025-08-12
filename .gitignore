@@ -10,3 +10,5 @@ graph/*
 traces/
 **/__pycache__
 demo/
+
+.DS_Store
