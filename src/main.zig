@@ -129,7 +129,7 @@ pub fn main() !u8 {
 
 fn usage() void {
     const usage_string =
-        \\ 
+        \\
         \\Usage:
         \\ osmium <file>.py/pyc [options]
         \\

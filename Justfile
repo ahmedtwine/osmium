@@ -44,28 +44,8 @@
 
 ZIG := "~/.local/share/zigup/0.13.0/files/zig"
 
-# Get started: just run hello.py
-
-default:
-    @just --list
-
-build:
-    {{ZIG}} build
-
-build-debug:
-    {{ZIG}} build -Dlog=true -Ddebug-extensions=true
-
-build-release:
-    {{ZIG}} build -Doptimize=ReleaseSafe
-
-run file:
-    ./zig-out/osmium {{file}}
+dev:
+    {{ZIG}} build && ./zig-out/osmium hello.py
 
 test:
     {{ZIG}} build test --summary all
-
-clean:
-    rm -rf zig-cache/ zig-out/
-
-fmt:
-    find src -name '*.zig' -exec {{ZIG}} fmt {} \;
