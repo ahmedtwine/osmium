@@ -195,7 +195,14 @@ pub fn runFile(
     const pyc = try Python.parse(source, file_name, allocator);
     defer allocator.free(pyc);
 
-    std.debug.print("pyc: {x}\n", .{pyc});
+    std.debug.print("\n=== Python Bytecode (PYC) ===\n", .{});
+    std.debug.print("Length: {d} bytes\n", .{pyc.len});
+    std.debug.print("Hex dump:\n", .{});
+    for (pyc, 0..) |byte, i| {
+        if (i % 16 == 0) std.debug.print("\n{x:0>4}: ", .{i});
+        std.debug.print("{x:0>2} ", .{byte});
+    }
+    std.debug.print("\n\n", .{});
 
     // var marshal = try Marshal.init(allocator, pyc);
     // // defer Object.alive_map.deinit(gc_allocator);
