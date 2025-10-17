@@ -12,9 +12,11 @@ pub fn build(b: *std.Build) !void {
 
     const exe = b.addExecutable(.{
         .name = "osmium",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const use_llvm = b.option(bool, "use-llvm", "Uses llvm to compile Osmium") orelse true;
@@ -86,10 +88,10 @@ fn getConfigHeader(
     const is_linux = t.os.tag == .linux;
 
     return b.addConfigHeader(.{
-        .style = .{ .autoconf = source.path("pyconfig.h.in") },
+        .style = .{ .autoconf_undef = source.path("pyconfig.h.in") },
         .include_path = "pyconfig.h",
     }, .{
-        .ALIGNOF_LONG = t.c_type_alignment(.long),
+        .ALIGNOF_LONG = t.cTypeAlignment(.long),
         .ALIGNOF_SIZE_T = 8,
         .DOUBLE_IS_LITTLE_ENDIAN_IEEE754 = 1,
         .ENABLE_IPV6 = 1,
@@ -431,13 +433,13 @@ fn getConfigHeader(
         .PY_FORMAT_SIZE_T = "z",
         .PY_SSL_DEFAULT_CIPHERS = 1,
         .RETSIGTYPE = .void,
-        .SIZEOF_DOUBLE = t.c_type_byte_size(.double),
-        .SIZEOF_FLOAT = t.c_type_byte_size(.float),
+        .SIZEOF_DOUBLE = t.cTypeByteSize(.double),
+        .SIZEOF_FLOAT = t.cTypeByteSize(.float),
         .SIZEOF_FPOS_T = 16,
-        .SIZEOF_INT = t.c_type_byte_size(.int),
-        .SIZEOF_LONG = t.c_type_byte_size(.long),
-        .SIZEOF_LONG_DOUBLE = t.c_type_byte_size(.longdouble),
-        .SIZEOF_LONG_LONG = t.c_type_byte_size(.longlong),
+        .SIZEOF_INT = t.cTypeByteSize(.int),
+        .SIZEOF_LONG = t.cTypeByteSize(.long),
+        .SIZEOF_LONG_DOUBLE = t.cTypeByteSize(.longdouble),
+        .SIZEOF_LONG_LONG = t.cTypeByteSize(.longlong),
         .SIZEOF_OFF_T = 8,
         .SIZEOF_PID_T = 4,
         .SIZEOF_PTHREAD_KEY_T = 4,
@@ -808,8 +810,10 @@ fn buildCpython(
 
     const cpython = b.addExecutable(.{
         .name = "cpython",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     cpython.linkLibrary(libpython);
     cpython.addCSourceFile(.{ .file = source.path("Programs/python.c") });
@@ -826,16 +830,19 @@ fn buildLibPython(
     const source = b.dependency("python", .{});
     const t = target.result;
 
-    const libpython = b.addStaticLibrary(.{
+    const libpython = b.addLibrary(.{
         .name = "python",
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     libpython.linkLibC();
     libpython.addIncludePath(source.path("."));
     libpython.addIncludePath(source.path("Include"));
     libpython.addIncludePath(source.path("Include/internal"));
-    libpython.defineCMacro("PLATLIBDIR", "\"lib\"");
+    libpython.root_module.addCMacro("PLATLIBDIR", "\"lib\"");
     libpython.addConfigHeader(config_header);
 
     libpython.addCSourceFiles(.{

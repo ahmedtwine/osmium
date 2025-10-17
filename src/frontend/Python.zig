@@ -59,7 +59,7 @@ pub fn utf8ToUtf32Z(
     in: []const u8,
     allocator: std.mem.Allocator,
 ) ![:0]const u32 {
-    var buffer = std.ArrayList(u32).init(allocator);
+    var buffer = std.array_list.Managed(u32).init(allocator);
     for (in) |char| {
         try buffer.append(char);
     }

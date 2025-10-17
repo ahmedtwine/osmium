@@ -42,7 +42,8 @@
 #
 # ================================================================================================
 
-ZIG := "~/.local/share/zigup/0.13.0/files/zig"
+# ZIG := "~/.local/share/zigup/0.13.0/files/zig"
+ZIG := "zig"
 
 dev:
     {{ZIG}} build && ./zig-out/osmium hello.py
