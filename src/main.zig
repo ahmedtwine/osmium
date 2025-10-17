@@ -144,18 +144,22 @@ fn usage() void {
         \\
     ;
 
-    const stdout = std.io.getStdOut().writer();
-    stdout.print(usage_string, .{}) catch |err| {
+    var buf: [4096]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&buf);
+    stdout.interface.print(usage_string, .{}) catch |err| {
         fatal("Failed to print usage: {}\n", .{err});
     };
+    stdout.interface.flush() catch {};
 }
 
 fn versionPrint() void {
-    const stdout = std.io.getStdOut().writer();
+    var buf: [1024]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&buf);
 
-    stdout.print("Osmium {s}\n", .{version}) catch |err| {
+    stdout.interface.print("Osmium {s}\n", .{version}) catch |err| {
         fatal("Failed to print version: {s}\n", .{@errorName(err)});
     };
+    stdout.interface.flush() catch {};
 }
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
@@ -183,7 +187,7 @@ pub fn runFile(
         allocator,
         source_file_size,
         null,
-        @alignOf(u8),
+        .@"1",
         0,
     );
     defer allocator.free(source);
@@ -191,7 +195,14 @@ pub fn runFile(
     const pyc = try Python.parse(source, file_name, allocator);
     defer allocator.free(pyc);
 
-    std.debug.print("pyc: {x}\n", .{pyc});
+    std.debug.print("\n=== Python Bytecode (PYC) ===\n", .{});
+    std.debug.print("Length: {d} bytes\n", .{pyc.len});
+    std.debug.print("Hex dump:\n", .{});
+    for (pyc, 0..) |byte, i| {
+        if (i % 16 == 0) std.debug.print("\n{x:0>4}: ", .{i});
+        std.debug.print("{x:0>2} ", .{byte});
+    }
+    std.debug.print("\n\n", .{});
 
     // var marshal = try Marshal.init(allocator, pyc);
     // // defer Object.alive_map.deinit(gc_allocator);

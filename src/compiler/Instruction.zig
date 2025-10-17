@@ -86,7 +86,11 @@ pub fn returns(
     };
 }
 
-pub fn fmt(inst: Instruction, co: CodeObject) std.fmt.Formatter(format2) {
+fn formatWrapper(ctx: FormatContext, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    try format2(ctx, "", .{}, writer);
+}
+
+pub fn fmt(inst: Instruction, co: CodeObject) std.fmt.Alt(FormatContext, formatWrapper) {
     return .{ .data = .{
         .co = co,
         .inst = inst,

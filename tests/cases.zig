@@ -24,10 +24,12 @@ pub fn addCases(
 
     const compare_tool = b.addExecutable(.{
         .name = "compare",
-        .root_source_file = b.path("tools/compare.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-        .omit_frame_pointer = false, // we need the stack trace
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/compare.zig"),
+            .target = target,
+            .optimize = .ReleaseSafe,
+            .omit_frame_pointer = false, // we need the stack trace
+        }),
     });
 
     for (test_dirs) |dir| {
@@ -70,7 +72,7 @@ pub fn getPyFilesInDir(
     dir_path: []const u8,
     allocator: std.mem.Allocator,
 ) ![]const []const u8 {
-    var files = std.ArrayList([]const u8).init(allocator);
+    var files = std.array_list.Managed([]const u8).init(allocator);
     defer files.deinit();
 
     var dir = try b.build_root.handle.openDir(dir_path, .{ .iterate = true });
