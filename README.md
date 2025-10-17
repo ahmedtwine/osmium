@@ -49,7 +49,7 @@ Osmium consists of three main components:
 
 ### Requirements
 
-- **Zig 0.15.1** (required - not 0.14.0 or earlier!)
+- **Zig 0.15.1**
 - macOS or Linux (Windows support planned)
 
 ### Installation
@@ -147,21 +147,6 @@ Hex dump:
 - Python 3.11+ support
 - C extension API compatibility
 
-## Recent Changes
-
-### Zig 0.15.1 Migration (2025-01-17)
-
-The project has been successfully migrated from Zig 0.13.0 to Zig 0.15.1. This was a major update involving:
-
-- **Build System Changes**: Updated `build.zig` and `build.zig.zon` for new module system
-- **Writer API ("Writergate")**: Migrated to new buffered I/O interface
-- **ArrayList Changes**: Updated to `std.array_list.Managed` API
-- **Formatter Changes**: Updated custom formatters to use `std.fmt.Alt()`
-- **Builtin Changes**: `@setCold` → `@branchHint(.cold)`
-- **Dependency Updates**: Updated openssl-zig and zlib to Zig 0.15 compatible versions
-
-The migration touched 10+ files and required careful handling of breaking changes in Zig's standard library.
-
 ## Contributing
 
 Contributions are welcome! However, please keep PRs focused and relatively small, as the codebase is still evolving rapidly with frequent rewrites.
@@ -180,9 +165,3 @@ Contributions are welcome! However, please keep PRs focused and relatively small
 ## License
 
 GPL-3.0-only - Copyright (c) 2024, David Rubin
-
-## Acknowledgments
-
-- Uses CPython 3.10 C source for Python standard library
-- Built with the Zig programming language
-- Uses zlib and OpenSSL for compression and crypto support
