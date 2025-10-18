@@ -1,7 +1,3 @@
-// Copyright (c) 2024, David Rubin <daviru007@icloud.com>
-//
-// SPDX-License-Identifier: GPL-3.0-only
-
 const std = @import("std");
 
 const cases = @import("tests/cases.zig");

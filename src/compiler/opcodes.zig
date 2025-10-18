@@ -1,7 +1,3 @@
-// Copyright (c) 2024, David Rubin <daviru007@icloud.com>
-//
-// SPDX-License-Identifier: GPL-3.0-only
-
 /// Op Codes
 pub const OpCode = enum(u8) {
     POP_TOP = 1,

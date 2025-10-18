@@ -1,7 +1,3 @@
-// Copyright (c) 2024, David Rubin <daviru007@icloud.com>
-//
-// SPDX-License-Identifier: GPL-3.0-only
-
 //! Handles error creation, serialisation, and printing
 
 const std = @import("std");
