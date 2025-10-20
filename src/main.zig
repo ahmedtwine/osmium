@@ -188,6 +188,11 @@ pub fn runFile(
     );
     defer allocator.free(source);
 
+    std.debug.print("\n=== Python Source Code ===\n", .{});
+    std.debug.print("File: {s}\n", .{file_name});
+    std.debug.print("Size: {d} bytes\n\n", .{source.len});
+    std.debug.print("{s}\n", .{source});
+
     const pyc = try Python.parse(source, file_name, allocator);
     defer allocator.free(pyc);
 
