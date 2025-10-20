@@ -4,26 +4,27 @@ A Python 3.10 interpreter written in Zig, designed to execute Python bytecode wi
 
 ## Project Status
 
-**Currently in early development** - Working on bytecode parsing and VM foundations.
+**Recently migrated to Zig 0.15.1** - Bytecode parsing and marshal system fully working.
 
-### What Works ✅
-- ✅ Python source file parsing to bytecode (PYC format)
-- ✅ Bytecode display and inspection
-- ✅ Variables and assignments
-- ✅ Basic math operations
-- ✅ User-defined function definitions and calls
-- ✅ Function returns
+### What Works
+- Python 3.10 bytecode compilation (PYC generation via CPython)
+- Complete PYC format deserialization (Marshal)
+- Bytecode instruction decoding (19 opcodes)
+- CodeObject parsing with constants, names, and varnames
+- Object type system (Int, String, Tuple, CodeObject, None)
+- Reference-based object sharing (TYPE_REF)
+- Hex dump and bytecode inspection
 
-### In Progress 🚧
-- 🚧 Full VM bytecode execution (currently commented out)
-- 🚧 Builtin functions ([Issue #4](https://github.com/Rexicon226/osmium/issues/4))
-- 🚧 Complete instruction set implementation
+### In Progress
+- VM bytecode execution (implementation exists but commented out)
+- Builtin functions - `print()` needed for Hello World
+- Stack-based instruction execution
+- Garbage collection integration
 
-### Planned 📋
-- Standard library support
-- Error handling and stack traces
-- Performance optimizations
-- Additional Python version support (currently 3.10 only)
+### Blocked/Needs Work
+- GC module missing - currently using ArenaAllocator
+- Graph and RefMask evaluation needs Zig 0.15.1 updates
+- Some marshal edge cases (filename/name field TYPE_REF handling)
 
 ## Architecture
 
@@ -94,74 +95,4 @@ result = add(5, 3)
 
 ```bash
 $ zig build && ./zig-out/osmium hello.py
-
-=== Python Bytecode (PYC) ===
-Length: 272 bytes
-Hex dump:
-
-0000: 6f 0d 0d 0a 00 00 00 00 64 52 f2 68 8f 00 00 00
-0010: 63 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-...
 ```
-
-## Next Steps / Roadmap
-
-### Immediate Goals (v0.1)
-
-1. **Uncomment and Fix VM Execution**
-   - The VM code in `src/main.zig` (lines 207-224) is currently commented out
-   - Need to update Marshal initialization for Zig 0.15.1 compatibility
-   - Fix any remaining API issues with Graph and RefMask evaluation
-   - Get basic bytecode execution working end-to-end
-
-2. **Implement Core Builtins**
-   - `print()` - Essential for "Hello World"
-   - `len()` - Required for basic collection operations
-   - `range()` - Needed for loops
-   - `type()` - Useful for debugging
-
-3. **Control Flow**
-   - If/else statements
-   - While loops
-   - For loops with range()
-   - Break and continue
-
-4. **Error Handling**
-   - Basic exception raising
-   - Try/except blocks
-   - Proper error messages
-
-### Medium-term Goals (v0.2)
-
-- Complete instruction set implementation
-- List, dict, tuple operations
-- String manipulation builtins
-- Import system basics
-- File I/O operations
-
-### Long-term Goals (v1.0)
-
-- Full Python 3.10 compatibility
-- Standard library modules
-- Performance optimizations
-- Python 3.11+ support
-- C extension API compatibility
-
-## Contributing
-
-Contributions are welcome! However, please keep PRs focused and relatively small, as the codebase is still evolving rapidly with frequent rewrites.
-
-**Good PR ideas:**
-- Implementing individual builtin functions
-- Adding test cases
-- Fixing bugs in existing instructions
-- Documentation improvements
-
-**Please avoid:**
-- Large architectural changes (discuss in an issue first)
-- Adding dependencies without discussion
-- Changing core VM semantics without benchmarks
-
-## License
-
-GPL-3.0-only - Copyright (c) 2024, David Rubin

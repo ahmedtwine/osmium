@@ -23,7 +23,7 @@ const log = std.log.scoped(.object);
 
 tag: Tag,
 
-pub fn get(header: anytype, comptime tag: Tag) if (@typeInfo(@TypeOf(header)).Pointer.is_const) *const tag.Data() else *tag.Data() {
+pub fn get(header: anytype, comptime tag: Tag) if (@typeInfo(@TypeOf(header)).pointer.is_const) *const tag.Data() else *tag.Data() {
     assert(header.tag == tag);
     return @alignCast(@fieldParentPtr("header", header));
 }

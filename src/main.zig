@@ -164,16 +164,16 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 pub fn runFile(
-    allocator: std.mem.Allocator,
+    base_allocator: std.mem.Allocator,
     file_name: [:0]const u8,
     options: Args,
 ) !void {
     _ = options;
 
-    // const gc_allocator = gc.allocator();
-    // gc.enable();
-    // gc.setFindLeak(build_options.enable_logging);
-    // defer gc.collect();
+    // Trying Arena Allocator for now
+    var arena = std.heap.ArenaAllocator.init(base_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     const source_file = try std.fs.cwd().openFile(file_name, .{ .lock = .exclusive });
     defer source_file.close();
@@ -200,11 +200,22 @@ pub fn runFile(
     }
     std.debug.print("\n\n", .{});
 
-    // var marshal = try Marshal.init(allocator, pyc);
-    // // defer Object.alive_map.deinit(gc_allocator);
-    // defer marshal.deinit();
-    // var graph = try Graph.evaluate(gc_allocator, seed);
-    // defer graph.deinit();
+    var marshal = try Marshal.init(allocator, pyc);
+    defer marshal.deinit();
+
+    const code = try marshal.parse();
+    std.debug.print("\n=== Parsed Code Object ===\n", .{});
+    std.debug.print("Name: {s}\n", .{code.name});
+    std.debug.print("Filename: {s}\n", .{code.filename});
+    std.debug.print("Argcount: {}\n", .{code.argcount});
+    std.debug.print("Nlocals: {}\n", .{code.nlocals});
+    std.debug.print("Stacksize: {}\n", .{code.stacksize});
+    std.debug.print("Instructions: {}\n", .{code.instructions.len});
+    std.debug.print("\nBytecode Instructions:\n", .{});
+    for (code.instructions, 0..) |inst, i| {
+        std.debug.print("  [{:0>3}] {s:<20} extra={}\n", .{ i, @tagName(inst.op), inst.extra });
+    }
+    std.debug.print("\n", .{});
 
     // var ref_mask = RefMask.evaluate(gc_allocator, seed, graph);
     // defer ref_mask.deinit();

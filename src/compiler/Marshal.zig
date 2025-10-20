@@ -7,6 +7,11 @@ const Object = @import("../vm/Object.zig");
 const Vm = @import("../vm/Vm.zig");
 const BigIntManaged = std.math.big.int.Managed;
 
+const VmCodeObject = @import("../vm/objects/CodeObject.zig");
+const VmString = @import("../vm/objects/String.zig");
+const VmInt = @import("../vm/objects/Int.zig");
+const VmTuple = @import("../vm/objects/Tuple.zig");
+
 const Marshal = @This();
 const readInt = std.mem.readInt;
 
@@ -79,7 +84,6 @@ fn createObject(marshal: *Marshal, comptime tag: Object.Tag, data: anytype) !*co
     const object = if (@intFromEnum(tag) < Object.Tag.first_payload) blk: {
         break :blk Object.init(tag);
     } else try Object.create(tag, marshal.allocator, data);
-    std.debug.print("creating: {*} {s}\n", .{ object, @tagName(tag) });
     try marshal.pool.append(marshal.allocator, object);
     return object;
 }
@@ -114,16 +118,21 @@ fn readSingleString(marshal: *Marshal) ![]const u8 {
             try marshal.references.append(allocator, .{ .byte = marshal.cursor, .index = index });
             marshal.flag_refs.items[index].?.usages += 1;
             const ref_obj = marshal.flag_refs.items[index].?.content;
-            const ref_string = ref_obj.get(.string);
-            break :ref try allocator.dupe(u8, ref_string.value);
+            if (ref_obj.tag == .string) {
+                const ref_string = ref_obj.get(.string);
+                break :ref try allocator.dupe(u8, ref_string.value);
+            } else {
+                break :ref try allocator.dupe(u8, "<unknown>");
+            }
         },
         else => std.debug.panic("TODO: readSingleString {s}", .{@tagName(ty)}),
     };
 
     if (ref_id) |id| {
+        const vm_str = VmString{ .header = .{ .tag = .string }, .value = try allocator.dupe(u8, string) };
         marshal.flag_refs.items[id] = .{
             .byte = marshal.cursor,
-            .content = try marshal.createObject(.string, .{ .value = try allocator.dupe(u8, string) }),
+            .content = try marshal.createObject(.string, vm_str),
         };
     }
 
@@ -147,21 +156,27 @@ fn readObject(marshal: *Marshal) Error!*const Object {
         .TYPE_NONE => try marshal.createObject(.none, null),
         .TYPE_CODE => code: {
             const code = try marshal.readCodeObject();
-            break :code try marshal.createObject(.codeobject, .{ .value = code });
+            const vm_co = VmCodeObject{ .header = .{ .tag = .codeobject }, .value = code };
+            break :code try marshal.createObject(.codeobject, vm_co);
         },
 
-        // .TYPE_STRING => try marshal.createObject(.string, try marshal.readString(.{})),
-
+        .TYPE_STRING => string: {
+            const string = try marshal.readString(.{});
+            const vm_str = VmString{ .header = .{ .tag = .string }, .value = string };
+            break :string try marshal.createObject(.string, vm_str);
+        },
         .TYPE_SHORT_ASCII_INTERNED,
         .TYPE_SHORT_ASCII,
         => string: {
             const string = try marshal.readString(.{ .short = true });
-            break :string try marshal.createObject(.string, .{ .value = string });
+            const vm_str = VmString{ .header = .{ .tag = .string }, .value = string };
+            break :string try marshal.createObject(.string, vm_str);
         },
 
         .TYPE_INT => int: {
             const new_int = try BigIntManaged.initSet(allocator, marshal.readLong(true));
-            break :int try marshal.createObject(.int, .{ .value = new_int });
+            const vm_int = VmInt{ .header = .{ .tag = .int }, .value = new_int };
+            break :int try marshal.createObject(.int, vm_int);
         },
 
         // .TYPE_TRUE => try marshal.createObject(.bool_true, null),
@@ -173,8 +188,8 @@ fn readObject(marshal: *Marshal) Error!*const Object {
             for (objects) |*object| {
                 object.* = try marshal.readObject();
             }
-            const tuple_obj = try marshal.createObject(.tuple, .{ .value = objects });
-            break :tuple tuple_obj;
+            const vm_tuple = VmTuple{ .header = .{ .tag = .tuple }, .value = objects };
+            break :tuple try marshal.createObject(.tuple, vm_tuple);
         },
         .TYPE_REF => ref: {
             const index = marshal.readLong(false);
@@ -188,7 +203,10 @@ fn readObject(marshal: *Marshal) Error!*const Object {
         //     const float_obj = try marshal.createObject(.float, float);
         //     break :float float_obj;
         // },
-        else => std.debug.panic("TODO: marshal.readObject {s}", .{@tagName(ty)}),
+        else => {
+            std.debug.print("ERROR: Unimplemented type: {s} (0x{x})\n", .{ @tagName(ty), @intFromEnum(ty) });
+            std.debug.panic("TODO: marshal.readObject {s}", .{@tagName(ty)});
+        },
     };
 
     if (ref_id) |id| {
@@ -220,9 +238,9 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
     result.varnames = try marshal.readObject();
     _ = try marshal.readObject();
     _ = try marshal.readObject();
+
     result.filename = try marshal.readSingleString();
     result.name = try marshal.readSingleString();
-    std.debug.print("name: {s}\n", .{result.name});
     result.firstlineno = marshal.readLong(false);
 
     try result.process(code, allocator);
