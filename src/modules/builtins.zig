@@ -5,6 +5,7 @@ const std = @import("std");
 
 const Object = @import("../vm/Object.zig");
 const Module = Object.Payload.Module;
+const ZigFunction = @import("../vm/objects/ZigFunction.zig");
 
 const Python = @import("../frontend/Python.zig");
 const Marshal = @import("../compiler/Marshal.zig");
@@ -39,7 +40,7 @@ pub fn create(allocator: std.mem.Allocator) !Module {
             var dict: Module.HashMap = .{};
             inline for (builtin_fns) |entry| {
                 const name, const fn_ptr = entry;
-                const object = try Object.create(.zig_function, allocator, fn_ptr);
+                const object = try Object.create(.zig_function, allocator, ZigFunction{ .func = fn_ptr });
                 try dict.put(allocator, name, object);
             }
             break :dict dict;
@@ -74,23 +75,21 @@ fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     const val = value: {
         switch (arg.tag) {
             .int => {
-                var integer = arg.get(.int).*;
-                integer.abs();
-                const abs_val = try vm.createObject(.int, integer);
+                var integer = arg.get(.int).value;
+                if (integer.isPositive() == false) integer.negate();
+                const abs_val = try vm.createObject(.int, .{ .value = integer });
                 break :value abs_val;
             },
             else => vm.fail("cannot abs() on type: {s}", .{@tagName(arg.tag)}),
         }
     };
 
-    try vm.stack.append(vm.allocator, val);
+    try vm.stack.append(vm.allocator, val.*);
 }
 
 fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
-    const stdout = std.io.getStdOut().writer();
-
     for (args, 0..) |arg, i| {
-        printSafe(stdout, "{}", .{arg});
+        std.debug.print("{any}", .{arg});
 
         const seperator: []const u8 = sep: {
             if (maybe_kw) |kw| {
@@ -99,16 +98,15 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
                 if (maybe_sep_override) |sep| {
                     if (sep.tag != .string) vm.fail("print(sep=) must be a string type", .{});
                     const payload = sep.get(.string);
-                    break :sep payload;
+                    break :sep payload.value;
                 }
             }
             break :sep " ";
         };
 
-        if (i < args.len - 1) printSafe(stdout, "{s}", .{seperator});
+        if (i < args.len - 1) std.debug.print("{s}", .{seperator});
     }
 
-    // If there's an "end" kw, it overrides this last print.
     const end_print: []const u8 = end_print: {
         if (maybe_kw) |kw| {
             const maybe_print_override = kw.get("end");
@@ -116,16 +114,16 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
             if (maybe_print_override) |print_override| {
                 if (print_override.tag != .string) vm.fail("print(end=) must be a string type", .{});
                 const payload = print_override.get(.string);
-                break :end_print payload;
+                break :end_print payload.value;
             }
         }
         break :end_print "\n";
     };
 
-    printSafe(stdout, "{s}", .{end_print});
+    std.debug.print("{s}", .{end_print});
 
     const return_val = try vm.createObject(.none, null);
-    try vm.stack.append(vm.allocator, return_val);
+    try vm.stack.append(vm.allocator, return_val.*);
 }
 
 fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
@@ -135,19 +133,15 @@ fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     if (args.len == 1) {
         const prompt = args[0];
         const prompt_string = prompt.get(.string);
-
-        const stdout = std.io.getStdOut();
-        printSafe(stdout.writer(), "{s}", .{prompt_string});
+        std.debug.print("{s}", .{prompt_string.value});
     }
 
-    const stdin = std.io.getStdIn();
-    const reader = stdin.reader();
+    const stdin = std.fs.File.stdin();
+    const line_const = stdin.readToEndAlloc(vm.allocator, 10 * 1024) catch "";
+    const line = try vm.allocator.dupe(u8, line_const);
 
-    var buffer = std.ArrayList(u8).init(vm.allocator);
-    try reader.streamUntilDelimiter(buffer.writer(), '\n', 10 * 1024); // TODO: is there a limit?
-
-    const output = try vm.createObject(.string, try buffer.toOwnedSlice());
-    try vm.stack.append(vm.allocator, output);
+    const output = try vm.createObject(.string, .{ .value = line });
+    try vm.stack.append(vm.allocator, output.*);
 }
 
 fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
@@ -155,19 +149,18 @@ fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     if (null != maybe_kw) vm.fail("int() takes no positional arguments", .{});
 
     const in = args[0];
-    const result: Object = switch (in.tag) {
+    const result = switch (in.tag) {
         .string => blk: {
             const string = in.get(.string);
-            // TODO: create a function for parsing arbitrarily long strings into big ints
-            const num = try std.fmt.parseInt(u64, string, 10);
+            const num = try std.fmt.parseInt(u64, string.value, 10);
             const new_int = try BigIntManaged.initSet(vm.allocator, num);
-            const new_obj = try vm.createObject(.int, new_int);
+            const new_obj = try vm.createObject(.int, .{ .value = new_int });
             break :blk new_obj;
         },
         else => |tag| vm.fail("TODO: int() {s}", .{@tagName(tag)}),
     };
 
-    try vm.stack.append(vm.allocator, result);
+    try vm.stack.append(vm.allocator, result.*);
 }
 
 fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
@@ -177,7 +170,7 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
     const obj = args[0];
     const name_obj = args[1];
     assert(name_obj.tag == .string);
-    const name_string = name_obj.get(.string);
+    const name_string = name_obj.get(.string).value;
 
     const dict = switch (obj.tag) {
         .module => obj.get(.module).dict,
@@ -185,10 +178,10 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
     };
 
     const attr_obj = dict.get(name_string) orelse {
-        vm.fail("object {} doesn't have an attribute named {s}", .{ obj, name_string });
+        vm.fail("object {any} doesn't have an attribute named {s}", .{ obj, name_string });
     };
 
-    try vm.stack.append(vm.allocator, attr_obj);
+    try vm.stack.append(vm.allocator, attr_obj.*);
 }
 
 fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
@@ -197,7 +190,6 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
     };
 }
 
-/// https://docs.python.org/3.10/library/stdtypes.html#truth
 fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
     if (null != kw) vm.fail("bool() has no kw args", .{});
     if (args.len > 1) vm.fail("bool() takes at most 1 arguments ({d} given)", .{args.len});
@@ -210,7 +202,7 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         .bool_true => true,
         .bool_false => false,
         .int => int: {
-            const integer = arg.get(.int);
+            const integer = arg.get(.int).value;
             var zero = try std.math.big.int.Managed.initSet(vm.allocator, 0);
             defer zero.deinit();
 
@@ -218,8 +210,8 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
             break :int true;
         },
         .string => string: {
-            const string = arg.get(.string);
-            if (string.len == 0) break :string false;
+            const str = arg.get(.string);
+            if (str.value.len == 0) break :string false;
             break :string true;
         },
         else => vm.fail("bool() cannot take in type: {s}", .{@tagName(arg.tag)}),
@@ -229,7 +221,7 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         try vm.createObject(.bool_true, null)
     else
         try vm.createObject(.bool_false, null);
-    try vm.stack.append(vm.allocator, val);
+    try vm.stack.append(vm.allocator, val.*);
 }
 
 fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
@@ -237,9 +229,9 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
 
     const mod_name_obj = args[0];
     assert(mod_name_obj.tag == .string);
-    const mod_name = mod_name_obj.get(.string);
+    const mod_name = mod_name_obj.get(.string).value;
 
-    const loaded_mod: Object.Payload.Module = file: {
+    const loaded_mod: Module = file: {
         {
             // check builtin-modules first
             const maybe_mod = vm.builtin_mods.get(mod_name);
@@ -265,7 +257,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
             // check around the file it's being imported from
             not: {
                 for (sys_path_list.items) |sys_path_obj| {
-                    const sys_path = sys_path_obj.get(.string);
+                    const sys_path = sys_path_obj.get(.string).value;
                     const potential_path = try std.fs.path.join(vm.allocator, &.{ sys_path, mod_name_ext });
                     const file = std.fs.openFileAbsolute(potential_path, .{}) catch |err| {
                         switch (err) {
@@ -283,27 +275,21 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         };
 
         const absolute_path = path: {
-            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            const path = try std.os.getFdPath(source_file.handle, &buf);
+            var buf: [std.posix.PATH_MAX]u8 = undefined;
+            const path = try std.fs.cwd().realpath(mod_name_ext, &buf);
             break :path try vm.allocator.dupeZ(u8, path);
         };
 
         defer source_file.close();
-        const source_file_size = (try source_file.stat()).size;
-        const source = try source_file.readToEndAllocOptions(
-            vm.allocator,
-            source_file_size,
-            source_file_size,
-            @alignOf(u8),
-            0,
-        );
+        const source_raw = try source_file.readToEndAlloc(vm.allocator, 1024 * 1024);
+        const source = try vm.allocator.dupeZ(u8, source_raw);
 
         const pyc = try Python.parse(source, absolute_path, vm.allocator);
         var marshal = try Marshal.init(vm.allocator, pyc);
         const object = try marshal.parse();
 
         // create a new vm to evaluate the global scope of the module
-        var mod_vm = try Vm.init(vm.allocator, object);
+        var mod_vm = try Vm.init(vm.allocator, object.*);
         mod_vm.initBuiltinMods(absolute_path) catch |err| {
             return vm.fail("failed init evaulte module {s} with error {s}", .{ absolute_path, @errorName(err) });
         };
@@ -329,14 +315,14 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
             // and in the source module
             if (fromlist != null and fromlist.?.tag == .tuple) exit: {
                 const list = fromlist.?;
-                const tuple = list.get(.tuple);
+                const tuple = list.get(.tuple).value;
                 for (tuple) |fromentry| {
-                    const from_name = fromentry.get(.string);
+                    const from_name = fromentry.get(.string).value;
                     if (std.mem.eql(u8, from_name, name)) {
                         try global_scope.put(
                             vm.allocator,
                             try vm.allocator.dupe(u8, name),
-                            try entry.value_ptr.clone(vm.allocator),
+                            entry.value_ptr,
                         );
                         break :exit;
                     }
@@ -345,7 +331,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
                 try global_scope.put(
                     vm.allocator,
                     try vm.allocator.dupe(u8, name),
-                    try entry.value_ptr.clone(vm.allocator),
+                    entry.value_ptr,
                 );
             }
         }
@@ -356,11 +342,12 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         };
     };
 
-    const new_mod = try vm.createObject(
-        .module,
-        try loaded_mod.clone(vm.allocator),
-    );
-    try vm.stack.append(vm.allocator, new_mod);
+    const new_mod = try vm.createObject(.module, .{
+        .name = try vm.allocator.dupe(u8, loaded_mod.name),
+        .file = if (loaded_mod.file) |f| try vm.allocator.dupe(u8, f) else null,
+        .dict = loaded_mod.dict,
+    });
+    try vm.stack.append(vm.allocator, new_mod.*);
 }
 
 fn __build_class__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
@@ -370,15 +357,15 @@ fn __build_class__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinErr
         vm.fail("__build_class__ takes at least 2 ({d} given)", .{args.len});
     }
 
-    const func_obj = args[0];
+    const func_obj = &args[0];
     const name_obj = args[1];
 
     assert(func_obj.tag == .function);
     assert(name_obj.tag == .string);
 
     const class = try vm.createObject(.class, .{
-        .name = name_obj.get(.string),
-        .under_func = func_obj,
+        .name = name_obj.get(.string).value,
+        .under_func = @constCast(func_obj),
     });
-    try vm.stack.append(vm.allocator, class);
+    try vm.stack.append(vm.allocator, class.*);
 }

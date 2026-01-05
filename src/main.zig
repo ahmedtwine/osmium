@@ -9,7 +9,6 @@ const Python = @import("frontend/Python.zig");
 const Marshal = @import("compiler/Marshal.zig");
 const crash_report = @import("crash_report.zig");
 const Vm = @import("vm/Vm.zig");
-const Object = @import("vm/Object.zig");
 const debug = if (build_options.build_debug) @import("vm/debug.zig") else {};
 
 const main_log = std.log.scoped(.main);
@@ -168,7 +167,6 @@ pub fn runFile(
     file_name: [:0]const u8,
     options: Args,
 ) !void {
-    _ = options;
 
     // Trying Arena Allocator for now
     var arena = std.heap.ArenaAllocator.init(base_allocator);
@@ -222,33 +220,15 @@ pub fn runFile(
     }
     std.debug.print("\n", .{});
 
-    // var ref_mask = RefMask.evaluate(gc_allocator, seed, graph);
-    // defer ref_mask.deinit();
+    if (options.run) {
+        std.debug.print("=== Running VM ===\n", .{});
 
-    // if (true) std.posix.exit(1);
+        var vm = try Vm.init(allocator, code.*);
+        defer vm.deinit();
 
-    // if (options.make_graph) {
-    //     try graph.dump();
-    // }
+        try vm.initBuiltinMods(file_name);
+        try vm.run();
 
-    // var vm = try Vm.init(gc_allocator, seed);
-    // defer vm.deinit();
-    // {
-    //     // TODO: audit this
-    //     var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    //     const source_file_path = try std.os.getFdPath(source_file.handle, &dir_path_buf);
-    //     try vm.initBuiltinMods(source_file_path);
-    // }
-    // if (options.run_debug and build_options.build_debug) try debug.run(&vm, gc_allocator);
-
-    // const elapsed_time = start_timer.read();
-    // main_log.debug("Setup Time: {d}ms", .{elapsed_time / std.time.ns_per_ms});
-
-    // if (options.run) try vm.run();
-
-    // main_log.debug("Run stats:", .{});
-    // main_log.debug(
-    //     "GC Heap Size: {}",
-    //     .{std.fmt.fmtIntSizeDec(gc.getHeapSize())},
-    // );
+        std.debug.print("\n=== VM Execution Complete ===\n", .{});
+    }
 }

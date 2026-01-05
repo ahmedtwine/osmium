@@ -78,7 +78,7 @@ pub const ReportItem = struct {
         );
 
         const filename = item.file_name;
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [std.posix.PATH_MAX]u8 = undefined;
         const source_path = try std.fs.cwd().realpath(filename, &buf);
 
         const file = try std.fs.openFileAbsolute(source_path, .{});
@@ -125,13 +125,14 @@ pub const Report = struct {
 
     pub fn printToWriter(
         report: *const Report,
-        writer: anytype,
+        file: std.fs.File,
     ) !void {
         assert(report.errors.len > 0);
         const errors = report.errors;
 
-        for (errors) |@"error"| {
-            try writer.print("{}\n", .{@"error"});
+        for (errors) |err| {
+            std.debug.print("{any}\n", .{err});
         }
+        _ = file;
     }
 };

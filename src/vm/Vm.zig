@@ -1,7 +1,6 @@
 //! Virtual Machine that runs Python Bytecode blazingly fast
 
 const std = @import("std");
-const gc = @import("gc");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
@@ -21,6 +20,7 @@ const Report = errors.Report;
 const ReportKind = errors.ReportKind;
 
 const Object = @import("Object.zig");
+const Set = @import("objects/Set.zig");
 const Vm = @This();
 
 const builtins = @import("../modules/builtins.zig");
@@ -35,6 +35,7 @@ co: CodeObject,
 /// When we enter into a deeper scope, we push the previous code object
 /// onto here. Then when we leave it, we restore this one.
 co_stack: std.ArrayListUnmanaged(CodeObject) = .{},
+locals_stack: std.ArrayListUnmanaged(std.ArrayListUnmanaged(Object)) = .{},
 
 /// When at `depth` 0, this is considered the global scope. loads will
 /// be targeted at the `global_scope`.
@@ -44,6 +45,7 @@ depth: u32 = 0,
 is_running: bool,
 
 stack: std.ArrayListUnmanaged(Object),
+locals: std.ArrayListUnmanaged(Object) = .{},
 scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(Object)) = .{},
 
 crash_info: crash_report.VmContext,
@@ -52,12 +54,15 @@ builtin_mods: std.StringHashMapUnmanaged(Object.Payload.Module) = .{},
 
 /// Takes ownership of `co`.
 pub fn init(allocator: Allocator, co: CodeObject) !Vm {
+    var locals = try std.ArrayListUnmanaged(Object).initCapacity(allocator, co.nlocals);
+    locals.appendNTimesAssumeCapacity(Object.init(.none).*, co.nlocals);
     return .{
         .allocator = allocator,
         .is_running = false,
         .co = co,
         .crash_info = crash_report.prepVmContext(co),
         .stack = try std.ArrayListUnmanaged(Object).initCapacity(allocator, co.stacksize),
+        .locals = locals,
     };
 }
 
@@ -77,7 +82,7 @@ pub fn initBuiltinMods(vm: *Vm, mod_path: []const u8) !void {
 
         try path_dirs.append(
             vm.allocator,
-            try vm.createObject(.string, root_dir_abs_path),
+            try vm.createObject(.string, .{ .value = root_dir_abs_path }),
         );
 
         const path_obj = try vm.createObject(.list, .{ .list = path_dirs });
@@ -95,7 +100,7 @@ pub fn initBuiltinMods(vm: *Vm, mod_path: []const u8) !void {
         const name = std.fs.path.stem(mod_path);
         const name_obj = try vm.createObject(
             .string,
-            try vm.allocator.dupe(u8, name),
+            .{ .value = try vm.allocator.dupe(u8, name) },
         );
         try module.dict.put(vm.allocator, "__name__", name_obj);
 
@@ -107,11 +112,8 @@ pub fn run(
     vm: *Vm,
 ) !void {
 
-    // create the immediate scope
     assert(vm.scopes.items.len == 0);
     try vm.scopes.append(vm.allocator, .{});
-
-    try vm.co.process(vm.allocator);
 
     vm.is_running = true;
 
@@ -120,10 +122,10 @@ pub fn run(
 
     while (vm.is_running) {
         vm.crash_info.setIndex(vm.co.index);
-        const instructions = vm.co.instructions.?;
+        const instructions = vm.co.instructions;
         const instruction = instructions[vm.co.index];
         log.debug(
-            "{s} - {s}: {s} (stack_size={}, pc={}/{}, depth={}, heap={})",
+            "{s} - {s}: {s} (stack_size={}, pc={}/{}, depth={})",
             .{
                 vm.co.filename,
                 vm.co.name,
@@ -132,7 +134,6 @@ pub fn run(
                 vm.co.index,
                 instructions.len,
                 vm.depth,
-                std.fmt.fmtIntSizeDec(gc.getHeapSize()),
             },
         );
         vm.co.index += 1;
@@ -304,7 +305,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 /// Stores an immediate Constant on the stack.
 fn execLoadConst(vm: *Vm, inst: Instruction) !void {
     const constant = vm.co.getConst(inst.extra);
-    try vm.stack.append(vm.allocator, constant);
+    try vm.stack.append(vm.allocator, constant.*);
 }
 
 fn execLoadName(vm: *Vm, inst: Instruction) !void {
@@ -316,7 +317,7 @@ fn execLoadName(vm: *Vm, inst: Instruction) !void {
 
 fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
-    const tos = vm.stack.pop();
+    const tos = vm.stack.pop().?;
 
     const func = try tos.getMemberFunction(name, vm.allocator) orelse {
         vm.fail("couldn't find '{s}.{s}'", .{ tos.ident(), name });
@@ -329,28 +330,27 @@ fn execLoadMethod(vm: *Vm, inst: Instruction) !void {
 fn execLoadGlobal(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
     const val = vm.scopes.items[0].get(name) orelse blk: {
-        // python is allowed to load builtin function using LOAD_GLOBAl as well
         const builtin = vm.builtin_mods.get("builtins") orelse @panic("didn't init builtins");
         const print_obj = builtin.dict.get(name) orelse vm.fail("name '{s}' not defined in the global scope", .{name});
-        break :blk print_obj;
+        break :blk print_obj.*;
     };
     try vm.stack.append(vm.allocator, val);
 }
 
 fn execLoadFast(vm: *Vm, inst: Instruction) !void {
     const var_num = inst.extra;
-    const obj = vm.co.varnames[var_num];
+    const obj = vm.locals.items[var_num];
     try vm.stack.append(vm.allocator, obj);
 }
 
 fn execLoadAttr(vm: *Vm, inst: Instruction) !void {
-    const names = vm.co.names.get(.tuple);
-    const attr_name = names[inst.extra];
+    const names = vm.co.names.get(.tuple).value;
+    const attr_name = names[inst.extra].*;
 
-    const obj = vm.stack.pop();
+    const obj = vm.stack.pop().?;
 
     const getattr_obj = vm.lookUpwards("getattr") orelse @panic("didn't init builtins");
-    const getattr_fn = getattr_obj.get(.zig_function).*;
+    const getattr_fn = getattr_obj.get(.zig_function).func;
     try @call(.auto, getattr_fn, .{ vm, &.{ obj, attr_name }, null });
 }
 
@@ -358,7 +358,7 @@ fn execLoadBuildClass(vm: *Vm) !void {
     const builtin = vm.builtin_mods.get("builtins") orelse @panic("didn't init builtins");
     const build_class = builtin.dict.get("__build_class__") orelse @panic("no __build_class__");
 
-    try vm.stack.append(vm.allocator, build_class);
+    try vm.stack.append(vm.allocator, build_class.*);
 }
 
 fn execStoreName(vm: *Vm, inst: Instruction) !void {
@@ -371,14 +371,16 @@ fn execStoreName(vm: *Vm, inst: Instruction) !void {
 
 fn execReturnValue(vm: *Vm) !void {
     if (vm.depth == 0) {
-        _ = vm.stack.pop();
+        _ = vm.stack.pop().?;
         vm.is_running = false;
         return;
     }
 
-    _ = vm.scopes.pop();
-    const new_co = vm.co_stack.pop();
-    vm.setNewCo(new_co);
+    _ = vm.scopes.pop().?;
+    const new_co = vm.co_stack.pop().?;
+    vm.locals = vm.locals_stack.pop().?;
+    vm.crash_info = crash_report.prepVmContext(new_co);
+    vm.co = new_co;
     vm.depth -= 1;
 }
 
@@ -387,63 +389,83 @@ fn execBuildList(vm: *Vm, inst: Instruction) !void {
     const objects = try vm.popNObjects(count);
     var list: Object.Payload.List.HashMap = .{};
 
-    try list.appendSlice(vm.allocator, objects);
+    for (objects) |obj| {
+        const ptr = try vm.allocator.create(Object);
+        ptr.* = obj;
+        try list.append(vm.allocator, ptr);
+    }
 
     const val = try vm.createObject(.list, .{ .list = list });
-    try vm.stack.append(vm.allocator, val);
+    try vm.stack.append(vm.allocator, val.*);
 }
 
 fn execBuildTuple(vm: *Vm, inst: Instruction) !void {
     const count = inst.extra;
     const objects = try vm.popNObjects(count);
-    const val = try vm.createObject(.tuple, objects);
-    try vm.stack.append(vm.allocator, val);
+
+    const ptrs = try vm.allocator.alloc(*const Object, count);
+    for (objects, 0..) |obj, i| {
+        const ptr = try vm.allocator.create(Object);
+        ptr.* = obj;
+        ptrs[i] = ptr;
+    }
+
+    const val = try vm.createObject(.tuple, .{ .value = ptrs });
+    try vm.stack.append(vm.allocator, val.*);
 }
 
 fn execBuildSet(vm: *Vm, inst: Instruction) !void {
     const objects = try vm.popNObjects(inst.extra);
-    var set: Object.Payload.Set.HashMap = .{};
+    var set: Set.HashMap = .{};
 
     for (objects) |object| {
-        try set.put(vm.allocator, object, {});
+        const ptr = try vm.allocator.create(Object);
+        ptr.* = object;
+        try set.put(vm.allocator, ptr, {});
     }
 
     const val = try vm.createObject(.set, .{ .set = set, .frozen = false });
-    try vm.stack.append(vm.allocator, val);
+    try vm.stack.append(vm.allocator, val.*);
 }
 
 fn execListExtend(vm: *Vm, inst: Instruction) !void {
-    const additions = vm.stack.pop();
+    const additions = vm.stack.pop().?;
     const list = vm.stack.getLast();
 
     assert(list.tag == .list);
     assert(additions.tag == .list or additions.tag == .tuple);
 
-    const list_ptr = list.get(.list);
+    const list_ptr = @constCast(list.get(.list));
 
     const index = absIndex(-@as(i16, inst.extra), list_ptr.list.items.len);
-    const new: []const Object = switch (additions.tag) {
-        .tuple => additions.get(.tuple),
-        .list => list: {
+
+    switch (additions.tag) {
+        .tuple => {
+            const tuple = additions.get(.tuple).value;
+            for (tuple) |ptr| {
+                const obj_ptr = try vm.allocator.create(Object);
+                obj_ptr.* = ptr.*;
+                try list_ptr.list.insert(vm.allocator, index, obj_ptr);
+            }
+        },
+        .list => {
             const additions_list = additions.get(.list);
-            break :list try vm.allocator.dupe(Object, additions_list.list.items);
+            try list_ptr.list.insertSlice(vm.allocator, index, additions_list.list.items);
         },
         else => unreachable,
-    };
-
-    try list_ptr.list.insertSlice(vm.allocator, index, new);
+    }
 }
 
 fn execCallFunction(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
     defer vm.allocator.free(args);
 
-    var func_object = vm.stack.pop();
+    var func_object = vm.stack.pop().?;
 
     switch (func_object.tag) {
         .zig_function => {
-            const func_ptr = func_object.get(.zig_function);
-            try @call(.auto, func_ptr.*, .{ vm, args, null });
+            const func_ptr = func_object.get(.zig_function).func;
+            try @call(.auto, func_ptr, .{ vm, args, null });
         },
         .function => {
             const func = func_object.get(.function);
@@ -455,9 +477,9 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
 
             try vm.scopes.append(vm.allocator, .{});
             try vm.co_stack.append(vm.allocator, vm.co);
-            vm.setNewCo(func.co);
+            try vm.setNewCo(func.co);
             for (args, 0..) |arg, i| {
-                vm.co.varnames[i] = arg;
+                vm.locals.items[i] = arg;
             }
             vm.depth += 1;
         },
@@ -469,9 +491,9 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
 
             try vm.scopes.append(vm.allocator, .{});
             try vm.co_stack.append(vm.allocator, vm.co);
-            vm.setNewCo(func.co);
+            try vm.setNewCo(func.co);
             for (args, 0..) |arg, i| {
-                vm.co.varnames[i] = arg;
+                vm.locals.items[i] = arg;
             }
             vm.depth += 1;
         },
@@ -480,66 +502,66 @@ fn execCallFunction(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execCallFunctionKW(vm: *Vm, inst: Instruction) !void {
-    const kw_tuple = vm.stack.pop();
-    const kw_tuple_slice = kw_tuple.get(.tuple);
+    const kw_tuple = vm.stack.pop().?;
+    const kw_tuple_slice = kw_tuple.get(.tuple).value;
     const tuple_len = kw_tuple_slice.len;
 
     var kw_args = builtins.KW_Type.init(vm.allocator);
     const kw_arg_objects = try vm.popNObjects(tuple_len);
 
-    for (kw_tuple_slice, kw_arg_objects) |name_object, val| {
-        const name = name_object.get(.string);
+    for (kw_tuple_slice, kw_arg_objects) |name_object_ptr, val| {
+        const name = name_object_ptr.get(.string).value;
         try kw_args.put(name, val);
     }
 
     const positional_args = try vm.popNObjects(inst.extra - tuple_len);
 
-    const func = vm.stack.pop();
-    const func_ptr = func.get(.zig_function);
+    const func = vm.stack.pop().?;
+    const func_ptr = func.get(.zig_function).func;
 
-    try @call(.auto, func_ptr.*, .{ vm, positional_args, kw_args });
+    try @call(.auto, func_ptr, .{ vm, positional_args, kw_args });
 }
 
 fn execCallMethod(vm: *Vm, inst: Instruction) !void {
     const args = try vm.popNObjects(inst.extra);
 
-    const self = vm.stack.pop();
-    const func = vm.stack.pop();
+    const self = vm.stack.pop().?;
+    const func = vm.stack.pop().?;
 
     switch (func.tag) {
         .function => {
             const py_func = func.get(.function);
             try vm.scopes.append(vm.allocator, .{});
             try vm.co_stack.append(vm.allocator, vm.co);
-            vm.setNewCo(py_func.co);
+            try vm.setNewCo(py_func.co);
             for (args, 0..) |arg, i| {
-                vm.co.varnames[i] = arg;
+                vm.locals.items[i] = arg;
             }
             vm.depth += 1;
         },
         .zig_function => {
-            const func_ptr = func.get(.zig_function);
+            const func_ptr = func.get(.zig_function).func;
             const self_args = try std.mem.concat(vm.allocator, Object, &.{ &.{self}, args });
-            try @call(.auto, func_ptr.*, .{ vm, self_args, null });
+            try @call(.auto, func_ptr, .{ vm, self_args, null });
         },
         else => unreachable,
     }
 }
 
 fn execPopTop(vm: *Vm) !void {
-    _ = vm.stack.pop();
+    _ = vm.stack.pop().?;
 }
 
 fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
-    const y = vm.stack.pop();
-    const x = vm.stack.pop();
+    const y = vm.stack.pop().?;
+    const x = vm.stack.pop().?;
 
     assert(x.tag == y.tag);
 
     const result_val = switch (x.tag) {
         .int => int: {
-            const x_int = x.get(.int);
-            const y_int = y.get(.int);
+            const x_int = &x.get(.int).value;
+            const y_int = &y.get(.int).value;
 
             var result = try BigIntManaged.init(vm.allocator);
 
@@ -547,31 +569,29 @@ fn execBinaryOperation(vm: *Vm, op: Instruction.BinaryOp) !void {
                 .add => try result.add(x_int, y_int),
                 .sub => try result.sub(x_int, y_int),
                 .mul => try result.mul(x_int, y_int),
-                // TODO: more
             }
 
-            break :int try vm.createObject(.int, result);
+            break :int try vm.createObject(.int, .{ .value = result });
         },
         .float => float: {
-            const x_float = x.get(.float).*;
-            const y_float = y.get(.float).*;
+            const x_float = x.get(.float).value;
+            const y_float = y.get(.float).value;
 
-            break :float try vm.createObject(.float, x_float + y_float);
+            break :float try vm.createObject(.float, .{ .value = x_float + y_float });
         },
         else => unreachable,
     };
 
-    try vm.stack.append(vm.allocator, result_val);
+    try vm.stack.append(vm.allocator, result_val.*);
 }
 
 fn execBinarySubscr(vm: *Vm) !void {
-    const tos = vm.stack.pop();
-    const list_obj = vm.stack.pop();
+    const tos = vm.stack.pop().?;
+    const list_obj = vm.stack.pop().?;
 
     assert(tos.tag == .int);
     const index_obj = tos.get(.int);
-    // can go usize both ways
-    const index = try index_obj.to(i128);
+    const index: i128 = index_obj.value.toConst().toInt(i128) catch 0;
 
     switch (list_obj.tag) {
         .list => {
@@ -589,21 +609,21 @@ fn execBinarySubscr(vm: *Vm) !void {
 
             const val = list_val.list.items[abs_index];
 
-            try vm.stack.append(vm.allocator, val);
+            try vm.stack.append(vm.allocator, val.*);
         },
         else => std.debug.panic("TODO: execBinarySubscr {s}", .{@tagName(list_obj.tag)}),
     }
 }
 
 fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
-    const x = vm.stack.pop();
-    const y = vm.stack.pop();
+    const x = vm.stack.pop().?;
+    const y = vm.stack.pop().?;
 
     assert(x.tag == .int);
     assert(y.tag == .int);
 
-    const x_int = x.get(.int).*;
-    const y_int = y.get(.int).*;
+    const x_int = x.get(.int).value;
+    const y_int = y.get(.int).value;
 
     const order = y_int.order(x_int);
 
@@ -624,13 +644,13 @@ fn execCompareOperation(vm: *Vm, inst: Instruction) !void {
         try vm.createObject(.bool_true, null)
     else
         try vm.createObject(.bool_false, null);
-    try vm.stack.append(vm.allocator, result_val);
+    try vm.stack.append(vm.allocator, result_val.*);
 }
 
 fn execStoreSubScr(vm: *Vm) !void {
-    const index = vm.stack.pop();
-    const list = vm.stack.pop();
-    const value = vm.stack.pop();
+    const index = vm.stack.pop().?;
+    const list = vm.stack.pop().?;
+    const value = vm.stack.pop().?;
 
     if (list.tag != .list) {
         vm.fail(
@@ -647,7 +667,7 @@ fn execStoreSubScr(vm: *Vm) !void {
     }
 
     const list_payload = list.get(.list).list;
-    const index_int = try index.get(.int).to(i64);
+    const index_int = try index.get(.int).value.toConst().toInt(i64);
 
     if (list_payload.items.len < index_int) {
         vm.fail(
@@ -656,23 +676,25 @@ fn execStoreSubScr(vm: *Vm) !void {
         );
     }
 
+    const value_ptr = try vm.allocator.create(Object);
+    value_ptr.* = value;
+
     if (index_int < 0) {
-        // @abs because then it resolves the usize target type.
-        list_payload.items[@intCast(list_payload.items.len - @abs(index_int))] = value;
+        list_payload.items[@intCast(list_payload.items.len - @abs(index_int))] = value_ptr;
     } else {
-        list_payload.items[@intCast(index_int)] = value;
+        list_payload.items[@intCast(index_int)] = value_ptr;
     }
 }
 
 fn execStoreFast(vm: *Vm, inst: Instruction) !void {
     const var_num = inst.extra;
-    const tos = vm.stack.pop();
-    vm.co.varnames[var_num] = tos;
+    const tos = vm.stack.pop().?;
+    vm.locals.items[var_num] = tos;
 }
 
 fn execStoreGlobal(vm: *Vm, inst: Instruction) !void {
     const name = vm.co.getName(inst.extra);
-    const tos = vm.stack.pop();
+    const tos = vm.stack.pop().?;
 
     // if 'name' doesn't exist in the global scope, we can implicitly
     // create it.
@@ -681,7 +703,7 @@ fn execStoreGlobal(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execSetUpdate(vm: *Vm, inst: Instruction) !void {
-    const seq = vm.stack.pop();
+    const seq = vm.stack.pop().?;
     const target = vm.stack.items[vm.stack.items.len - inst.extra];
     try target.callMemberFunction(
         vm,
@@ -692,7 +714,7 @@ fn execSetUpdate(vm: *Vm, inst: Instruction) !void {
 }
 
 fn execPopJump(vm: *Vm, inst: Instruction, case: bool) !void {
-    const tos = vm.stack.pop();
+    const tos = vm.stack.pop().?;
     if (tos.tag.getBool() == case) {
         vm.co.index = inst.extra;
     }
@@ -705,12 +727,12 @@ fn execJumpForward(vm: *Vm, inst: Instruction) !void {
 fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
     const arg_ty: Object.Payload.PythonFunction.ArgType = @enumFromInt(inst.extra);
 
-    const name_object = vm.stack.pop();
-    const co_object = vm.stack.pop();
+    const name_object = vm.stack.pop().?;
+    const co_object = vm.stack.pop().?;
 
     const extra = switch (arg_ty) {
         .none => null,
-        .string_tuple => vm.stack.pop(),
+        .string_tuple => vm.stack.pop().?,
         else => std.debug.panic("TODO: execMakeFunction {s}", .{@tagName(arg_ty)}),
     };
     _ = extra;
@@ -719,68 +741,69 @@ fn execMakeFunction(vm: *Vm, inst: Instruction) !void {
     assert(co_object.tag == .codeobject);
 
     const name = name_object.get(.string);
-    var co = co_object.get(.codeobject);
-    try co.process(vm.allocator);
+    const co = co_object.get(.codeobject);
 
     const function = try vm.createObject(.function, .{
-        .name = try vm.allocator.dupe(u8, name),
-        .co = try co.clone(vm.allocator),
+        .name = try vm.allocator.dupe(u8, name.value),
+        .co = co.value,
     });
 
-    try vm.stack.append(vm.allocator, function);
+    try vm.stack.append(vm.allocator, function.*);
 }
 
 fn execUnpackedSequence(vm: *Vm, inst: Instruction) !void {
     const length = inst.extra;
-    const object = vm.stack.pop();
+    const object = vm.stack.pop().?;
     assert(object.tag == .tuple);
 
-    const values = object.get(.tuple);
+    const values = object.get(.tuple).value;
     assert(values.len == length);
 
     for (0..length) |i| {
-        try vm.stack.append(vm.allocator, values[length - i - 1]);
+        try vm.stack.append(vm.allocator, values[length - i - 1].*);
     }
 }
 
 fn execRotTwo(vm: *Vm) !void {
-    const bottom = vm.stack.pop();
+    const bottom = vm.stack.pop().?;
     try vm.stack.insert(vm.allocator, vm.stack.items.len - 1, bottom);
 }
 
 fn execImportName(vm: *Vm, inst: Instruction) !void {
     const mod_name = vm.co.getName(inst.extra);
-    const from_list = vm.stack.pop();
-    const level = vm.stack.pop();
+    const from_list = vm.stack.pop().?;
+    const level = vm.stack.pop().?;
 
     assert(from_list.tag == .none or from_list.tag == .tuple);
     assert(level.tag == .int);
 
-    const name_obj = try vm.createObject(.string, mod_name);
+    const name_obj = try vm.createObject(.string, .{
+        .value = try vm.allocator.dupe(u8, mod_name),
+    });
 
     var kw_args = builtins.KW_Type.init(vm.allocator);
     defer kw_args.deinit();
 
     // zig fmt: off
-    try kw_args.put("globals",  try vm.createObject(.none, null));
-    try kw_args.put("locals",   try vm.createObject(.none, null));
+    try kw_args.put("globals",  Object.init(.none).*);
+    try kw_args.put("locals",   Object.init(.none).*);
     try kw_args.put("fromlist", from_list);
     try kw_args.put("level",    level);
     // zig fmt: on
 
     const import_obj = vm.lookUpwards("__import__") orelse @panic("didn't init builtins");
-    const import_zig_fn = import_obj.get(.zig_function).*;
-    try @call(.auto, import_zig_fn, .{ vm, &.{name_obj}, kw_args });
+    const import_zig_fn = import_obj.get(.zig_function).func;
+    try @call(.auto, import_zig_fn, .{ vm, &.{name_obj.*}, kw_args });
 }
 
 fn execImportFrom(vm: *Vm, inst: Instruction) !void {
-    const names = vm.co.names.get(.tuple);
-    const name = names[inst.extra];
+    const names = vm.co.names.get(.tuple).value;
+    const name = names[inst.extra].*;
 
-    const mod = vm.stack.pop();
+    const mod = vm.stack.pop().?;
 
     const getattr_obj = vm.lookUpwards("getattr") orelse @panic("didn't init builtins");
-    const getattr_fn = getattr_obj.get(.zig_function).*;
+    const getattr_fn = getattr_obj.get(.zig_function).func;
     try @call(.auto, getattr_fn, .{ vm, &.{ mod, name }, null });
 }
 
@@ -792,7 +815,7 @@ fn execImportFrom(vm: *Vm, inst: Instruction) !void {
 fn popNObjects(vm: *Vm, n: usize) ![]Object {
     const objects = try vm.allocator.alloc(Object, n);
     for (0..n) |i| {
-        const tos = vm.stack.pop();
+        const tos = vm.stack.pop().?;
         const index = n - i - 1;
         objects[index] = tos;
     }
@@ -814,7 +837,7 @@ fn lookUpwards(vm: *Vm, name: []const u8) ?Object {
         // Now check the builtin module for this declartion.
         const builtin = vm.builtin_mods.get("builtins") orelse @panic("didn't init builtins");
         if (builtin.dict.get(name)) |val| {
-            break :obj val;
+            break :obj val.*;
         }
 
         if (vm.depth == 0) break :obj null;
@@ -834,7 +857,7 @@ pub fn createObject(
     vm: *Vm,
     comptime tag: Object.Tag,
     data: ?(if (@intFromEnum(tag) >= Object.Tag.first_payload) tag.Data() else void),
-) error{OutOfMemory}!Object {
+) error{OutOfMemory}!*Object {
     const has_payload = @intFromEnum(tag) >= Object.Tag.first_payload;
     if (data == null and has_payload)
         @panic("called vm.createObject without payload for payload tag");
@@ -851,7 +874,10 @@ pub fn createObject(
 fn setNewCo(
     vm: *Vm,
     new_co: CodeObject,
-) void {
+) !void {
+    try vm.locals_stack.append(vm.allocator, vm.locals);
+    vm.locals = try std.ArrayListUnmanaged(Object).initCapacity(vm.allocator, new_co.nlocals);
+    vm.locals.appendNTimesAssumeCapacity(Object.init(.none).*, new_co.nlocals);
     vm.crash_info = crash_report.prepVmContext(new_co);
     vm.co = new_co;
 }
@@ -863,20 +889,18 @@ pub fn fail(
 ) noreturn {
     errdefer |err| std.debug.panic("failed to vm.fail: {s}", .{@errorName(err)});
 
-    var references = std.ArrayList(Reference).init(vm.allocator);
-    errdefer references.deinit();
+    var references: std.ArrayListUnmanaged(Reference) = .empty;
+    errdefer references.deinit(vm.allocator);
 
-    // recurse backwards through the call stack and add
-    // a helpful message to show where it came from
     const co_stack = vm.co_stack.items;
     for (0..co_stack.len) |i| {
         const index = co_stack.len - i - 1;
         const co = co_stack[index];
-        try references.append(.{ .co = co });
+        try references.append(vm.allocator, .{ .co = co });
     }
 
-    var reports = std.ArrayList(ReportItem).init(vm.allocator);
-    errdefer reports.deinit();
+    var reports: std.ArrayListUnmanaged(ReportItem) = .empty;
+    errdefer reports.deinit(vm.allocator);
 
     {
         const index: u32 = @intCast(vm.co.index);
@@ -887,18 +911,17 @@ pub fn fail(
             .@"error",
             vm.co.filename,
             message,
-            try references.toOwnedSlice(),
+            try references.toOwnedSlice(vm.allocator),
             line,
         );
-        try reports.append(error_report);
+        try reports.append(vm.allocator, error_report);
     }
 
-    const report = Report.init(try reports.toOwnedSlice());
+    const report = Report.init(try reports.toOwnedSlice(vm.allocator));
 
-    const stderr = std.io.getStdErr();
-    // it's important that nothing interupts this
+    const stderr = std.fs.File.stderr();
     try stderr.lock(.exclusive);
-    try report.printToWriter(stderr.writer());
+    try report.printToWriter(stderr);
     stderr.unlock();
 
     std.posix.exit(1);

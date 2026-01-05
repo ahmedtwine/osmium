@@ -4,9 +4,12 @@ const Allocator = std.mem.Allocator;
 
 const List = @This();
 
-header: Object = .{ .tag = .list },
+pub const HashMap = std.ArrayListUnmanaged(*Object);
 
-pub fn deinit(list: *const List, allocator: Allocator) void {
-    _ = list;
+header: Object = .{ .tag = .list },
+list: HashMap = .{},
+
+pub fn deinit(self: *const List, allocator: Allocator) void {
+    _ = self;
     _ = allocator;
 }

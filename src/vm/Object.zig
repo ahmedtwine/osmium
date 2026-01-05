@@ -18,6 +18,69 @@ const Class = @import("objects/Class.zig");
 
 const Allocator = std.mem.Allocator;
 
+pub const Payload = struct {
+    pub const Module = struct {
+        pub const HashMap = std.StringHashMapUnmanaged(*Object);
+
+        name: []const u8,
+        file: ?[]const u8 = null,
+        dict: HashMap = .{},
+
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
+            allocator.free(self.name);
+            if (self.file) |f| allocator.free(f);
+            self.dict.deinit(allocator);
+        }
+
+        pub fn clone(self: @This(), allocator: Allocator) !@This() {
+            return .{
+                .name = try allocator.dupe(u8, self.name),
+                .file = if (self.file) |f| try allocator.dupe(u8, f) else null,
+                .dict = self.dict,
+            };
+        }
+    };
+
+    pub const List = struct {
+        pub const HashMap = std.ArrayListUnmanaged(*Object);
+
+        list: HashMap = .{},
+
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
+            self.list.deinit(allocator);
+        }
+    };
+
+    pub const Set = struct {
+        pub const HashMap = std.HashMapUnmanaged(*Object, void, Context, 80);
+
+        set: HashMap = .{},
+        frozen: bool = false,
+
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
+            self.set.deinit(allocator);
+        }
+    };
+
+    pub const PythonFunction = struct {
+        pub const ArgType = enum(u8) {
+            none = 0x00,
+            string_tuple = 0x01,
+            dict = 0x02,
+            string_tuple_and_dict = 0x03,
+            closure = 0x08,
+        };
+
+        name: []const u8,
+        co: @import("../compiler/CodeObject.zig"),
+
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
+            allocator.free(self.name);
+            self.co.deinit(allocator);
+        }
+    };
+};
+
 const assert = std.debug.assert;
 const log = std.log.scoped(.object);
 
@@ -99,6 +162,15 @@ pub const Tag = enum(usize) {
             else => unreachable,
         };
     }
+
+    pub fn getBool(t: Tag) bool {
+        return switch (t) {
+            .bool_true => true,
+            .bool_false => false,
+            .none => false,
+            else => true,
+        };
+    }
 };
 
 pub fn create(comptime t: Tag, allocator: Allocator, data: anytype) error{OutOfMemory}!*Object {
@@ -133,7 +205,39 @@ pub fn init(comptime t: Tag) *Object {
 
 const CloneError = error{OutOfMemory};
 
-// pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: Allocator) error{OutOfMemory}!?Object {
+pub fn ident(object: *const Object) []const u8 {
+    return @tagName(object.tag);
+}
+
+pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: Allocator) error{OutOfMemory}!?Object {
+    _ = name;
+    _ = allocator;
+    switch (object.tag) {
+        .module => {
+            return null;
+        },
+        .class => {
+            return null;
+        },
+        else => return null,
+    }
+}
+
+pub fn callMemberFunction(
+    object: *const Object,
+    vm: *Vm,
+    name: []const u8,
+    args: []Object,
+    kw: ?builtins.KW_Type,
+) !void {
+    _ = object;
+    _ = vm;
+    _ = name;
+    _ = args;
+    _ = kw;
+}
+
+// pub fn getMemberFunctionOld(object: *const Object, name: []const u8, allocator: Allocator) error{OutOfMemory}!?Object {
 //     const member_list: Payload.MemberFuncTy = switch (object.tag) {
 //         .list => Payload.List.MemberFns,
 //         .set => Payload.Set.MemberFns,

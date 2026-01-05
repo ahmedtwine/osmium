@@ -136,24 +136,19 @@ pub fn process(
 
 // Helper functions
 
-/// Converts an index into this CodeObject's instructions
-/// into a line number in the file_name of the CodeObject.
-///
-/// Consider the ranges 1, 3, 8, 24 as addresses,
-/// and the relative line numbers of 0, 2, 5, 9
-///
-/// The addresses 1 and 2 will be at line 0, (3, 8] will be line 2, and so on.
+pub fn getConst(co: *const CodeObject, index: usize) *const Object {
+    const consts = co.consts.get(.tuple).value;
+    return consts[index];
+}
+
+pub fn getName(co: *const CodeObject, index: usize) []const u8 {
+    const names = co.names.get(.tuple).value;
+    return names[index].get(.string).value;
+}
+
 pub fn addr2Line(co: *const CodeObject, addr: u32) u32 {
-    const tab = co.lnotab;
-    var key_iter = tab.keyIterator();
-
-    var last_key: u32 = 0;
-    while (key_iter.next()) |key_ptr| {
-        const key = key_ptr.*;
-        if (addr >= last_key) last_key = key;
-    }
-
-    return co.firstlineno + tab.get(last_key).?;
+    _ = addr;
+    return co.firstlineno;
 }
 
 const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -166,16 +161,17 @@ pub fn hash(
 
     hasher.update(co.filename);
     hasher.update(co.name);
-    hasher.update(co.code);
 
     hasher.update(std.mem.asBytes(&co.argcount));
     hasher.update(std.mem.asBytes(&co.stacksize));
     hasher.update(std.mem.asBytes(&co.consts));
     hasher.update(std.mem.asBytes(&co.names));
-    hasher.update(std.mem.sliceAsBytes(co.varnames));
-    hasher.update(std.mem.asBytes(co.instructions.?)); // CodeObject should be processed before hashing
+    hasher.update(std.mem.asBytes(&co.varnames));
 
-    // we don't hash the index on purpose as it has nothing to do with the unique contents of the object
+    for (co.instructions) |inst| {
+        hasher.update(std.mem.asBytes(&inst));
+    }
+
     var out: [Sha256.digest_length]u8 = undefined;
     hasher.final(&out);
 
