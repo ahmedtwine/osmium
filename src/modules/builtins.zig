@@ -19,7 +19,7 @@ const log = std.log.scoped(.builtins);
 const Vm = @import("../vm/Vm.zig");
 const assert = std.debug.assert;
 
-pub const KW_Type = std.StringHashMap(Object);
+pub const KW_Type = std.StringHashMap(*const Object);
 
 pub const BuiltinError =
     error{OutOfMemory} ||
@@ -30,7 +30,7 @@ pub const BuiltinError =
     std.fmt.ParseIntError ||
     Python.Error;
 
-pub const func_proto = fn (*Vm, []const Object, kw: ?KW_Type) BuiltinError!void;
+pub const func_proto = fn (*Vm, []*const Object, kw: ?KW_Type) BuiltinError!void;
 
 pub fn create(allocator: std.mem.Allocator) !Module {
     return .{
@@ -65,7 +65,7 @@ pub const builtin_fns = &.{
     // // zig fmt: on
 };
 
-fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
+fn abs(vm: *Vm, args: []*const Object, kw: ?KW_Type) BuiltinError!void {
     if (null != kw) vm.fail("abs() has no kw args", .{});
 
     if (args.len != 1) vm.fail("abs() takes exactly one argument ({d} given)", .{args.len});
@@ -84,12 +84,32 @@ fn abs(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         }
     };
 
-    try vm.stack.append(vm.allocator, val.*);
+    try vm.stack.append(vm.allocator, val);
 }
 
-fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+fn print(vm: *Vm, args: []*const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     for (args, 0..) |arg, i| {
-        std.debug.print("{any}", .{arg});
+        switch (arg.tag) {
+            .none => std.debug.print("None", .{}),
+            .bool_true => std.debug.print("True", .{}),
+            .bool_false => std.debug.print("False", .{}),
+            .int => {
+                const int_obj = arg.get(.int);
+                var buf: [128]u8 = undefined;
+                var limbs_buf: [16]std.math.big.Limb = undefined;
+                const len = int_obj.value.toConst().toString(&buf, 10, .lower, &limbs_buf);
+                std.debug.print("{s}", .{buf[0..len]});
+            },
+            .float => {
+                const float = arg.get(.float);
+                std.debug.print("{d:.1}", .{float.value});
+            },
+            .string => {
+                const string = arg.get(.string);
+                std.debug.print("{s}", .{string.value});
+            },
+            else => std.debug.print("<object {s}>", .{@tagName(arg.tag)}),
+        }
 
         const seperator: []const u8 = sep: {
             if (maybe_kw) |kw| {
@@ -123,10 +143,10 @@ fn print(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     std.debug.print("{s}", .{end_print});
 
     const return_val = try vm.createObject(.none, null);
-    try vm.stack.append(vm.allocator, return_val.*);
+    try vm.stack.append(vm.allocator, return_val);
 }
 
-fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+fn input(vm: *Vm, args: []*const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     if (args.len > 1) vm.fail("input() takes at most 1 argument ({d} given)", .{args.len});
     if (null != maybe_kw) vm.fail("input() takes no positional arguments", .{});
 
@@ -141,10 +161,10 @@ fn input(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     const line = try vm.allocator.dupe(u8, line_const);
 
     const output = try vm.createObject(.string, .{ .value = line });
-    try vm.stack.append(vm.allocator, output.*);
+    try vm.stack.append(vm.allocator, output);
 }
 
-fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+fn int(vm: *Vm, args: []*const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     if (args.len != 1) vm.fail("int() takes exactly 1 argument ({d} given)", .{args.len});
     if (null != maybe_kw) vm.fail("int() takes no positional arguments", .{});
 
@@ -160,10 +180,10 @@ fn int(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
         else => |tag| vm.fail("TODO: int() {s}", .{@tagName(tag)}),
     };
 
-    try vm.stack.append(vm.allocator, result.*);
+    try vm.stack.append(vm.allocator, result);
 }
 
-fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+fn getattr(vm: *Vm, args: []*const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     assert(maybe_kw == null);
     if (args.len != 2) vm.fail("getattr() takes exactly two arguments ({d} given)", .{args.len});
 
@@ -178,10 +198,10 @@ fn getattr(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void 
     };
 
     const attr_obj = dict.get(name_string) orelse {
-        vm.fail("object {any} doesn't have an attribute named {s}", .{ obj, name_string });
+        vm.fail("object {f} doesn't have an attribute named {s}", .{ obj.*, name_string });
     };
 
-    try vm.stack.append(vm.allocator, attr_obj.*);
+    try vm.stack.append(vm.allocator, attr_obj);
 }
 
 fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
@@ -190,7 +210,7 @@ fn printSafe(writer: anytype, comptime fmt: []const u8, args: anytype) void {
     };
 }
 
-fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
+fn @"bool"(vm: *Vm, args: []*const Object, kw: ?KW_Type) BuiltinError!void {
     if (null != kw) vm.fail("bool() has no kw args", .{});
     if (args.len > 1) vm.fail("bool() takes at most 1 arguments ({d} given)", .{args.len});
     if (args.len == 0) vm.fail("bool() takes 1 argument, 0 given", .{});
@@ -221,10 +241,10 @@ fn @"bool"(vm: *Vm, args: []const Object, kw: ?KW_Type) BuiltinError!void {
         try vm.createObject(.bool_true, null)
     else
         try vm.createObject(.bool_false, null);
-    try vm.stack.append(vm.allocator, val.*);
+    try vm.stack.append(vm.allocator, val);
 }
 
-fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+fn __import__(vm: *Vm, args: []*const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     if (args.len != 1) vm.fail("__import__() takes exactly 1 arguments ({d} given)", .{args.len});
 
     const mod_name_obj = args[0];
@@ -305,7 +325,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         const mod_scope = mod_vm.scopes.items[0];
         var global_scope: Object.Payload.Module.HashMap = .{};
 
-        const fromlist: ?Object = if (maybe_kw) |kw| kw.get("fromlist") else null;
+        const fromlist: ?*const Object = if (maybe_kw) |kw| kw.get("fromlist") else null;
 
         var iter = mod_scope.iterator();
         while (iter.next()) |entry| {
@@ -322,7 +342,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
                         try global_scope.put(
                             vm.allocator,
                             try vm.allocator.dupe(u8, name),
-                            entry.value_ptr,
+                            entry.value_ptr.*,
                         );
                         break :exit;
                     }
@@ -331,7 +351,7 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
                 try global_scope.put(
                     vm.allocator,
                     try vm.allocator.dupe(u8, name),
-                    entry.value_ptr,
+                    entry.value_ptr.*,
                 );
             }
         }
@@ -347,17 +367,17 @@ fn __import__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!vo
         .file = if (loaded_mod.file) |f| try vm.allocator.dupe(u8, f) else null,
         .dict = loaded_mod.dict,
     });
-    try vm.stack.append(vm.allocator, new_mod.*);
+    try vm.stack.append(vm.allocator, new_mod);
 }
 
-fn __build_class__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinError!void {
+fn __build_class__(vm: *Vm, args: []*const Object, maybe_kw: ?KW_Type) BuiltinError!void {
     _ = maybe_kw;
 
     if (args.len < 2) {
         vm.fail("__build_class__ takes at least 2 ({d} given)", .{args.len});
     }
 
-    const func_obj = &args[0];
+    const func_obj = args[0];
     const name_obj = args[1];
 
     assert(func_obj.tag == .function);
@@ -367,5 +387,5 @@ fn __build_class__(vm: *Vm, args: []const Object, maybe_kw: ?KW_Type) BuiltinErr
         .name = name_obj.get(.string).value,
         .under_func = @constCast(func_obj),
     });
-    try vm.stack.append(vm.allocator, class.*);
+    try vm.stack.append(vm.allocator, class);
 }

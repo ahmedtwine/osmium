@@ -209,18 +209,11 @@ pub fn ident(object: *const Object) []const u8 {
     return @tagName(object.tag);
 }
 
-pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: Allocator) error{OutOfMemory}!?Object {
+pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: Allocator) error{OutOfMemory}!?*Object {
     _ = name;
     _ = allocator;
-    switch (object.tag) {
-        .module => {
-            return null;
-        },
-        .class => {
-            return null;
-        },
-        else => return null,
-    }
+    _ = object;
+    return null;
 }
 
 pub fn callMemberFunction(
@@ -301,18 +294,17 @@ pub fn callMemberFunction(
 // }
 
 pub fn format(
-    object: Object,
-    comptime fmt: []const u8,
-    _: std.fmt.FormatOptions,
+    object: *const Object,
     writer: anytype,
 ) !void {
-    assert(fmt.len == 0);
-
     switch (object.tag) {
         .none => try writer.writeAll("None"),
         .int => {
             const int = object.get(.int);
-            try writer.print("{}", .{int.value});
+            var buf: [128]u8 = undefined;
+            var limbs_buf: [16]std.math.big.Limb = undefined;
+            const len = int.value.toConst().toString(&buf, 10, .lower, &limbs_buf);
+            try writer.writeAll(buf[0..len]);
         },
         .float => {
             const float = object.get(.float);

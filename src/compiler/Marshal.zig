@@ -152,6 +152,7 @@ fn readObject(marshal: *Marshal) Error!*const Object {
     }
 
     const ty: ObjType = @enumFromInt(next_byte);
+    std.debug.print("  readObject: type={s} (0x{x}), cursor={}\n", .{ @tagName(ty), next_byte, marshal.cursor });
     const object: *const Object = switch (ty) {
         .TYPE_NONE => try marshal.createObject(.none, null),
         .TYPE_CODE => code: {
@@ -234,8 +235,11 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
     defer marshal.allocator.free(code);
 
     result.consts = try marshal.readObject();
+    std.debug.print("Marshal: consts ptr={*}, tag={s}\n", .{ result.consts, if (@intFromPtr(result.consts) <= 0x30) "SENTINEL" else @tagName(result.consts.tag) });
     result.names = try marshal.readObject();
+    std.debug.print("Marshal: names ptr={*}, tag={s}\n", .{ result.names, if (@intFromPtr(result.names) <= 0x30) "SENTINEL" else @tagName(result.names.tag) });
     result.varnames = try marshal.readObject();
+    std.debug.print("Marshal: varnames ptr={*}, tag={s}\n", .{ result.varnames, if (@intFromPtr(result.varnames) <= 0x30) "SENTINEL" else @tagName(result.varnames.tag) });
     _ = try marshal.readObject();
     _ = try marshal.readObject();
 

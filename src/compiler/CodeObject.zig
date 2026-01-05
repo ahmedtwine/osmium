@@ -142,7 +142,13 @@ pub fn getConst(co: *const CodeObject, index: usize) *const Object {
 }
 
 pub fn getName(co: *const CodeObject, index: usize) []const u8 {
+    std.debug.print("    getName: co.names ptr = {*}\n", .{co.names});
+    if (@intFromPtr(co.names) <= 0x30) {
+        std.debug.panic("getName: co.names is a sentinel (None/bool), cannot get name index {}", .{index});
+    }
+    std.debug.print("    getName: co.names.tag = {s}\n", .{@tagName(co.names.tag)});
     const names = co.names.get(.tuple).value;
+    std.debug.print("    getName: names.len = {}\n", .{names.len});
     return names[index].get(.string).value;
 }
 

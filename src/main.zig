@@ -222,8 +222,9 @@ pub fn runFile(
 
     if (options.run) {
         std.debug.print("=== Running VM ===\n", .{});
-
+        std.debug.print("Before Vm.init: code.names ptr={*}, tag={s}\n", .{ code.names, if (@intFromPtr(code.names) <= 0x30) "SENTINEL" else @tagName(code.names.tag) });
         var vm = try Vm.init(allocator, code.*);
+        std.debug.print("After Vm.init: vm.co.names ptr={*}, tag={s}\n", .{ vm.co.names, if (@intFromPtr(vm.co.names) <= 0x30) "SENTINEL" else @tagName(vm.co.names.tag) });
         defer vm.deinit();
 
         try vm.initBuiltinMods(file_name);
