@@ -247,6 +247,9 @@ fn readCodeObject(marshal: *Marshal) Error!CodeObject {
     result.name = try marshal.readSingleString();
     result.firstlineno = marshal.readLong(false);
 
+    // Python 3.10+ has co_linetable at the end
+    _ = try marshal.readObject(); // linetable (bytes object)
+
     try result.process(code, allocator);
 
     return result;

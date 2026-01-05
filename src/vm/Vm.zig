@@ -143,31 +143,42 @@ pub fn run(
 }
 
 pub fn deinit(vm: *Vm) void {
+    std.debug.print("deinit: scopes\n", .{});
     for (vm.scopes.items) |*scope| {
         var val_iter = scope.valueIterator();
         while (val_iter.next()) |val| {
-            val.*.deinit(vm.allocator);
+            if (@intFromPtr(val.*) > 0x30) {
+                val.*.deinit(vm.allocator);
+            }
         }
         scope.deinit(vm.allocator);
     }
     vm.scopes.deinit(vm.allocator);
 
-    for (vm.stack.items) |obj| {
-        obj.deinit(vm.allocator);
+    std.debug.print("deinit: stack (len={})\n", .{vm.stack.items.len});
+    for (vm.stack.items, 0..) |obj, i| {
+        std.debug.print("  stack[{}]: ptr={*}, tag={s}\n", .{ i, obj, @tagName(Object.safeTag(obj)) });
+        if (@intFromPtr(obj) > 0x30) {
+            obj.deinit(vm.allocator);
+        }
     }
+    std.debug.print("deinit: stack array\n", .{});
     vm.stack.deinit(vm.allocator);
 
+    std.debug.print("deinit: co_stack\n", .{});
     for (vm.co_stack.items) |*co| {
         co.deinit(vm.allocator);
     }
     vm.co_stack.deinit(vm.allocator);
 
+    std.debug.print("deinit: builtin_mods\n", .{});
     var mod_iter = vm.builtin_mods.valueIterator();
     while (mod_iter.next()) |mod| {
         mod.deinit(vm.allocator);
     }
     vm.builtin_mods.deinit(vm.allocator);
 
+    std.debug.print("deinit: co\n", .{});
     vm.co.deinit(vm.allocator);
     vm.* = undefined;
 }
@@ -307,7 +318,7 @@ fn exec(vm: *Vm, inst: Instruction) !void {
 fn execLoadConst(vm: *Vm, inst: Instruction) !void {
     std.debug.print("  LOAD_CONST: extra={}\n", .{inst.extra});
     const constant = vm.co.getConst(inst.extra);
-    std.debug.print("  LOAD_CONST: got constant, tag={s}\n", .{@tagName(constant.tag)});
+    std.debug.print("  LOAD_CONST: got constant, tag={s}\n", .{@tagName(Object.safeTag(constant))});
     try vm.stack.append(vm.allocator, @constCast(constant));
     std.debug.print("  LOAD_CONST: pushed to stack, stack.len={}\n", .{vm.stack.items.len});
 }

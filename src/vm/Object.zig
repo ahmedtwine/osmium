@@ -206,7 +206,15 @@ pub fn init(comptime t: Tag) *Object {
 const CloneError = error{OutOfMemory};
 
 pub fn ident(object: *const Object) []const u8 {
-    return @tagName(object.tag);
+    return @tagName(safeTag(object));
+}
+
+pub fn safeTag(object: *const Object) Tag {
+    const ptr = @intFromPtr(object);
+    if (ptr == Tag.sentinel(.none)) return .none;
+    if (ptr == Tag.sentinel(.bool_true)) return .bool_true;
+    if (ptr == Tag.sentinel(.bool_false)) return .bool_false;
+    return object.tag;
 }
 
 pub fn getMemberFunction(object: *const Object, name: []const u8, allocator: Allocator) error{OutOfMemory}!?*Object {

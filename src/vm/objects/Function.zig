@@ -10,6 +10,8 @@ name: []const u8,
 co: CodeObject,
 
 pub fn deinit(function: *const Function, allocator: Allocator) void {
-    allocator.free(function.name);
-    function.co.deinit(allocator);
+    _ = function;
+    _ = allocator;
+    // Note: name and co are owned by the marshal pool, not by this function.
+    // They will be freed when marshal.deinit() runs.
 }
